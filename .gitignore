@@ -1,0 +1,6 @@
+.env
+venv/
+__pycache__/
+*.pyc
+*.csv
+sim_state.json

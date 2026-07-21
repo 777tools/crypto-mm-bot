@@ -1,0 +1,3 @@
+python-bitbankcc
+requests
+python-dotenv

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CryptoMM Bot 管理画面</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=JetBrains+Mono:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0b12;--card:#141826;--line:#262c3d;--txt:#e8eaf2;--dim:#8b90a5;--pri:#7c5cff;--ok:#2dd4a7;--ng:#ff5a7a;--warn:#f4b740;
+  --font-jp:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN",system-ui,sans-serif;--font-num:"JetBrains Mono",monospace;--font-logo:"Orbitron",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-jp);background:var(--bg);color:var(--txt);line-height:1.6;-webkit-font-smoothing:antialiased}
+.metric .val,.val{font-family:var(--font-num)!important;letter-spacing:.01em}
+.wrap{max-width:1100px;margin:0 auto;padding:20px}
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:10px}
+h1{font-size:1.2rem;color:var(--pri);font-family:monospace}
+.badge{font-size:.7rem;font-weight:800;padding:3px 10px;border-radius:12px;background:var(--warn);color:#0b0d16}
+.badge.live{background:var(--ng);color:#fff}
+.status{font-size:.8rem;color:var(--dim)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ng);margin-right:5px}
+.dot.on{background:var(--ok)}
+nav{display:flex;gap:6px;margin:16px 0;flex-wrap:wrap}
+nav button{background:var(--card);border:1px solid var(--line);color:var(--dim);padding:9px 16px;border-radius:9px;cursor:pointer;font-size:.88rem;font-weight:700}
+nav button.active{background:var(--pri);color:#fff;border-color:var(--pri)}
+.tab{display:none}.tab.show{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:14px}
+.card h2{font-size:.95rem;color:var(--pri);margin-bottom:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.metric{background:#0f1320;border:1px solid var(--line);border-radius:9px;padding:12px;text-align:center}
+.metric .lbl{font-size:.72rem;color:var(--dim)}
+.metric .val{font-size:1.15rem;font-weight:800;margin-top:4px;font-family:monospace}
+label{display:block;font-size:.82rem;font-weight:700;margin:12px 0 5px}
+label:first-child{margin-top:0}
+input,select{width:100%;padding:10px 12px;background:#0f1320;border:1px solid var(--line);border-radius:8px;color:var(--txt);font-size:.9rem}
+.hint{font-size:.75rem;color:var(--dim);margin-top:4px}
+.row{display:flex;gap:12px;flex-wrap:wrap}.row>div{flex:1;min-width:130px}
+button.act{background:var(--pri);color:#fff;border:none;padding:11px 18px;border-radius:9px;font-weight:800;cursor:pointer;margin-top:14px;margin-right:8px}
+button.ok{background:var(--ok);color:#0b0d16}button.stop{background:var(--ng)}
+.pill{display:inline-block;font-size:.72rem;padding:3px 9px;border-radius:11px;font-weight:700}
+.pill.on{background:#0f3a2c;color:var(--ok);border:1px solid #1e7a52}
+.pill.off{background:#3a1220;color:var(--ng);border:1px solid #7a1e3e}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+td,th{padding:8px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--dim);font-weight:700}
+.msg{padding:10px;border-radius:8px;margin-top:10px;font-size:.83rem;display:none}
+.msg.ok{background:#0f3a2c;color:var(--ok);display:block}.msg.err{background:#3a1220;color:var(--ng);display:block}
+.step{background:#0f1320;border-left:3px solid var(--pri);padding:10px 14px;border-radius:6px;margin-bottom:8px;font-size:.85rem}
+.step b{color:var(--pri)}
+a{color:#7aa2ff}
+.warnbox{background:#3a2e12;border:1px solid #7a5e1e;color:var(--warn);padding:10px 14px;border-radius:8px;font-size:.82rem;margin-bottom:14px}
+/* ===== login ===== */
+#login{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;overflow:hidden;
+  background:radial-gradient(1200px 700px at 20% -10%,rgba(124,92,255,.25),transparent 60%),radial-gradient(900px 600px at 100% 110%,rgba(45,212,167,.18),transparent 55%),#06070d}
+#login::before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(124,92,255,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(124,92,255,.06) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(ellipse at center,#000 30%,transparent 75%);animation:grid 24s linear infinite}
+@keyframes grid{to{background-position:44px 44px,44px 44px}}
+.orb{position:absolute;border-radius:50%;filter:blur(70px);opacity:.55;pointer-events:none}
+.orb1{width:340px;height:340px;top:-60px;left:-40px;background:#7c5cff;animation:float 13s ease-in-out infinite}
+.orb2{width:300px;height:300px;bottom:-60px;right:-40px;background:#2dd4a7;animation:float 16s ease-in-out infinite 3s}
+@keyframes float{0%,100%{transform:translate(0,0)}50%{transform:translate(30px,-24px)}}
+#login .box{position:relative;z-index:2;width:380px;max-width:90%;padding:38px 32px;border-radius:20px;
+  background:linear-gradient(160deg,rgba(26,30,46,.9),rgba(12,14,24,.92));border:1px solid rgba(124,92,255,.35);
+  box-shadow:0 0 0 1px rgba(255,255,255,.03) inset,0 30px 80px rgba(0,0,0,.6),0 0 60px rgba(124,92,255,.15);
+  backdrop-filter:blur(12px);animation:rise .8s cubic-bezier(.16,1,.3,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(30px) scale(.96)}to{opacity:1;transform:none}}
+.logo{display:flex;justify-content:center;margin-bottom:16px}
+.logo svg{width:66px;height:66px;filter:drop-shadow(0 0 16px rgba(124,92,255,.6))}
+.logo svg .rng{transform-origin:center;animation:spin 8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#login .brand{text-align:center;font-family:monospace;font-size:1.5rem;font-weight:800;letter-spacing:.05em;margin-bottom:4px;
+  background:linear-gradient(90deg,#a78bfa,#e8eaf2,#2dd4a7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-size:200% auto;animation:sh 5s linear infinite}
+@keyframes sh{to{background-position:200% center}}
+#login .sub{text-align:center;color:var(--dim);font-size:.74rem;letter-spacing:.25em;margin-bottom:26px;text-transform:uppercase}
+#login label{font-size:.78rem;color:var(--dim)}
+#login input{margin-top:6px;background:#0b0e18;border:1px solid var(--line);transition:.25s}
+#login input:focus{outline:none;border-color:var(--pri);box-shadow:0 0 0 3px rgba(124,92,255,.18)}
+#login .lbtn{width:100%;margin-top:20px;padding:13px;border:none;border-radius:11px;cursor:pointer;font-weight:800;font-size:.95rem;color:#fff;
+  background:linear-gradient(90deg,#7c5cff,#9d7bff,#2dd4a7);background-size:200% auto;transition:.3s;box-shadow:0 8px 24px rgba(124,92,255,.35)}
+#login .lbtn:hover{background-position:100% center;transform:translateY(-2px);box-shadow:0 12px 30px rgba(124,92,255,.5)}
+#login .foot{text-align:center;color:#565b70;font-size:.68rem;margin-top:18px}
+
+.brandhead{display:flex;align-items:center;gap:10px}
+.brandhead .bh-name{font-family:var(--font-logo);font-weight:800;font-size:1.25rem;letter-spacing:.06em;color:#e8eaf2}
+.brandhead .bh-accent{color:#7c5cff;margin-left:2px}
+</style></head><body>
+
+<div id="login">
+  <div class="orb orb1"></div><div class="orb orb2"></div>
+  <div class="box">
+    <div class="logo"><svg viewBox="0 0 64 64" fill="none">
+      <circle class="rng" cx="32" cy="32" r="26" stroke="#7c5cff" stroke-width="1.5" stroke-dasharray="6 8" opacity=".7"/>
+      <path d="M32 12 L50 22 V42 L32 52 L14 42 V22 Z" stroke="#a78bfa" stroke-width="2" fill="rgba(124,92,255,.08)"/>
+      <path d="M23 38 L29 26 L33 34 L37 22 L42 38" stroke="#2dd4a7" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg></div>
+    <div class="brand">CryptoMM Bot</div>
+    <div class="sub">ETH/JPY Auto Market Making</div>
+    <label>ID</label>
+    <input type="text" id="loginId" placeholder="IDを入力" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
+    <label>パスワード</label>
+    <input type="password" id="loginPw" placeholder="パスワードを入力" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="lbtn" onclick="doLogin()">ログイン →</button>
+    <div class="msg" id="loginMsg"></div>
+    <div class="foot">初期ID: admin ／ 初期パスワード: crypto2026</div>
+  </div>
+</div>
+
+<div class="wrap" id="app" style="display:none">
+<header>
+  <div class="brandhead">
+    <svg viewBox="0 0 40 40" width="34" height="34" fill="none"><path d="M20 4 L33 12 V28 L20 36 L7 28 V12 Z" stroke="#7c5cff" stroke-width="2" fill="rgba(124,92,255,.1)"/><path d="M13 25 L18 15 L22 22 L27 12" stroke="#2dd4a7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span class="bh-name">CryptoMM<span class="bh-accent">Bot</span></span>
+  </div>
+  <div>
+    <span class="badge" id="modeBadge">SIMULATION</span>
+    <span class="status"><span class="dot" id="dot"></span><span id="statusText">停止中</span></span>
+    <button onclick="logout()" style="background:none;border:1px solid var(--line);color:var(--dim);padding:5px 10px;border-radius:7px;cursor:pointer;font-size:.75rem;margin-left:8px">ログアウト</button>
+  </div>
+</header>
+
+<nav>
+  <button class="active" onclick="tab('dash',this)">📊 ダッシュボード</button>
+  <button onclick="tab('keys',this)">🔑 APIキー設定</button>
+  <button onclick="tab('rules',this)">⚙️ 売買ルール</button>
+  <button onclick="tab('guide',this)">📖 使い方</button>
+</nav>
+
+<div class="tab show" id="dash">
+  <div class="card">
+    <h2>稼働コントロール</h2>
+    <div class="row"><div><label>モード</label>
+      <select id="runMode"><option value="sim">シミュレーション（お金を使わない）</option><option value="live">本番（実際に売買）</option></select>
+    </div></div>
+    <button class="act ok" onclick="startBot()">▶ 起動</button>
+    <button class="act stop" onclick="stopBot()">■ 停止</button>
+    <div class="hint">※本番の前に、必ずシミュレーションで動きを確認してください。</div>
+    <div class="msg" id="ctrlMsg"></div>
+  </div>
+  <div class="card"><h2>現在の状態</h2>
+    <div class="grid">
+      <div class="metric"><div class="lbl">GMO価格（ETH）</div><div class="val" id="m_gmo">---</div></div>
+      <div class="metric"><div class="lbl">bitbank価格（ETH）</div><div class="val" id="m_bb">---</div></div>
+      <div class="metric"><div class="lbl">乖離</div><div class="val" id="m_gap">---</div></div>
+      <div class="metric"><div class="lbl">累計損益</div><div class="val" id="m_pl">---</div></div>
+      <div class="metric"><div class="lbl">合計資産</div><div class="val" id="m_asset">---</div></div>
+      <div class="metric"><div class="lbl">約定回数</div><div class="val" id="m_trades">0</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="tab" id="keys">
+  <div class="card">
+    <h2>🔑 bitbank APIキーの登録 <span class="pill off" id="keyStat">未設定</span></h2>
+    <div class="warnbox">APIキーは<b>あなた自身の bitbank アカウント</b>のものを使います。他人に渡さないでください。入力したキーはサーバーの .env に保存され、画面には表示されません。</div>
+    <label>bitbank API Key</label>
+    <input type="password" id="apiKey" placeholder="xxxxxxxx-xxxx-xxxx-...">
+    <label>bitbank API Secret</label>
+    <input type="password" id="apiSecret" placeholder="（シークレット）">
+    <button class="act" onclick="saveKeys()">保存する</button>
+    <div class="msg" id="keyMsg"></div>
+  </div>
+  <div class="card">
+    <h2>📍 APIキーの取り方</h2>
+    <div class="step"><b>1.</b> <a href="https://bitbank.cc/" target="_blank">bitbank.cc</a> にログイン</div>
+    <div class="step"><b>2.</b> 右上メニュー →「<b>API</b>」を開く</div>
+    <div class="step"><b>3.</b>「新しいAPIキーを発行」をクリック</div>
+    <div class="step"><b>4.</b> 権限で「<b>資産の参照</b>」と「<b>注文（新規・取消）</b>」に必ずチェック（売買に必要）</div>
+    <div class="step"><b>5.</b> 発行された <b>API Key</b> と <b>Secret</b> を上のフォームに貼り付けて保存</div>
+    <div class="hint">※Secret は発行時の1回しか表示されません。必ずコピーしておいてください。</div>
+  </div>
+  <div class="card"><h2>🔒 パスワード変更</h2>
+    <label>新しい管理画面パスワード（6文字以上）</label>
+    <input type="password" id="newPw" placeholder="新しいパスワード">
+    <button class="act" onclick="changePw()">変更する</button>
+    <div class="msg" id="pwMsg"></div>
+  </div>
+</div>
+
+<div class="tab" id="rules">
+  <div class="card">
+    <h2>⚙️ 売買ルール（現在の設定・変更できます）</h2>
+    <div class="hint" style="margin-bottom:12px">下の値がいま適用されているルールです。変更して「保存」すると次回起動から反映されます。はじめは初期値のままシミュレーションで試すのがおすすめです。</div>
+    <div class="row">
+      <div><label>1回の注文量（ETH）</label><input type="number" step="0.01" id="r_order_size"><div class="hint">1回の売買で扱うETHの量</div></div>
+      <div><label>チェック間隔（秒）</label><input type="number" id="r_interval"><div class="hint">価格を見に行く間隔</div></div>
+    </div>
+    <div class="row">
+      <div><label>レンジ相場スプレッド（円）</label><input type="number" id="r_spread_range"><div class="hint">横ばい相場での売買値幅。狭いほど約定しやすいが利益小</div></div>
+      <div><label>トレンド相場スプレッド（円）</label><input type="number" id="r_spread_trend"><div class="hint">値動きが強い時の値幅。広くしてリスク回避</div></div>
+    </div>
+    <div class="row">
+      <div><label>乖離しきい値（円）</label><input type="number" id="r_spread_threshold"><div class="hint">GMOとbitbankの価格差がこれ以上で発注</div></div>
+      <div><label>急落ガード（%）</label><input type="number" step="0.1" id="r_crash_threshold"><div class="hint">この割合の急落で自動的に発注停止</div></div>
+    </div>
+    <button class="act" onclick="saveRules()">この内容で保存</button>
+    <div class="msg" id="ruleMsg"></div>
+  </div>
+  <div class="card"><h2>🧠 判定の仕組み（4段階）</h2>
+    <table>
+      <tr><th>段階</th><th>内容</th></tr>
+      <tr><td>1. 乖離チェック</td><td>GMOとbitbankの価格差が「乖離しきい値」以上あるか</td></tr>
+      <tr><td>2. ボラティリティ</td><td>値動きが激しすぎないか（激しい時は見送り）</td></tr>
+      <tr><td>3. 相場判定</td><td>レンジ／トレンドを判定し、スプレッドを自動で切替</td></tr>
+      <tr><td>4. 急落ガード</td><td>「急落ガード%」以上の下落で発注を自動停止</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="tab" id="guide">
+  <div class="card"><h2>📖 はじめての方へ（この順番で）</h2>
+    <div class="step"><b>STEP1</b> 「🔑 APIキー設定」で、bitbankのAPIキーを登録する</div>
+    <div class="step"><b>STEP2</b> 「⚙️ 売買ルール」で設定を確認（最初は初期値のままでOK）</div>
+    <div class="step"><b>STEP3</b> 「📊 ダッシュボード」でモードを「シミュレーション」にして<b>▶起動</b></div>
+    <div class="step"><b>STEP4</b> 数値が動き出すのを確認。問題なければモードを「本番」にして起動</div>
+  </div>
+  <div class="card"><h2>❓ このBotは何をする？</h2>
+    <p style="font-size:.87rem">GMOとbitbankのETH価格差（乖離）を利用して、bitbankで買い注文と売り注文を並べ、その利ざやを狙う「マーケットメイキング」を自動で行います。相場を4段階で判定し、危険な時は自動で発注を止めます。</p>
+  </div>
+  <div class="warnbox">⚠️ 暗号資産の自動売買は損失のリスクがあります。本ツールは教育・研究目的であり、投資助言ではありません。実際の運用は自己責任で行ってください。必ずシミュレーションで確認してから本番に進んでください。</div>
+</div>
+</div>
+
+<script>
+const API='api.php';
+async function call(action,data){const b=new URLSearchParams({action,...(data||{})});const r=await fetch(API,{method:'POST',body:b});return r.json();}
+function show(id,ok,txt){const e=document.getElementById(id);e.className='msg '+(ok?'ok':'err');e.textContent=txt;}
+function tab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('show'));document.getElementById(id).classList.add('show');document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));btn.classList.add('active');if(id==='keys'||id==='rules')loadConfig();}
+
+async function doLogin(){const r=await call('login',{username:document.getElementById('loginId').value,password:document.getElementById('loginPw').value});
+  if(r.success){document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';loadConfig();update();}
+  else show('loginMsg',false,r.error||'失敗');}
+async function logout(){await call('logout');location.reload();}
+async function changePw(){const r=await call('change_password',{new_password:document.getElementById('newPw').value});show('pwMsg',r.success,r.success?'変更しました':r.error);}
+
+async function loadConfig(){const r=await call('get_config');if(!r.success)return;
+  const ks=document.getElementById('keyStat');ks.className='pill '+(r.keys_set?'on':'off');ks.textContent=r.keys_set?'設定済み':'未設定';
+  const rl=r.rules;document.getElementById('r_order_size').value=rl.order_size;document.getElementById('r_interval').value=rl.interval;
+  document.getElementById('r_spread_range').value=rl.spread_range;document.getElementById('r_spread_trend').value=rl.spread_trend;
+  document.getElementById('r_spread_threshold').value=rl.spread_threshold;document.getElementById('r_crash_threshold').value=rl.crash_threshold;}
+async function saveKeys(){const r=await call('save_keys',{api_key:document.getElementById('apiKey').value,api_secret:document.getElementById('apiSecret').value});
+  show('keyMsg',r.success,r.success?'保存しました。キーは安全に .env に保管されました。':r.error);if(r.success){document.getElementById('apiKey').value='';document.getElementById('apiSecret').value='';loadConfig();}}
+async function saveRules(){const d={order_size:r_order_size.value,interval:r_interval.value,spread_range:r_spread_range.value,spread_trend:r_spread_trend.value,spread_threshold:r_spread_threshold.value,crash_threshold:r_crash_threshold.value};
+  const r=await call('save_rules',d);show('ruleMsg',r.success,r.success?'保存しました。次回起動から反映されます。':r.error);}
+async function startBot(){const m=document.getElementById('runMode').value;const b=document.getElementById('modeBadge');b.textContent=m==='live'?'LIVE':'SIMULATION';b.className='badge'+(m==='live'?' live':'');const r=await call('start',{mode:m});show('ctrlMsg',r.success,r.success?(m==='live'?'本番モードで起動しました':'シミュレーションで起動しました'):(r.error||'失敗'));}
+async function stopBot(){const r=await call('stop');show('ctrlMsg',r.success,'停止しました');}
+
+async function update(){try{const r=await fetch(API+'?action=status');const d=await r.json();
+  document.getElementById('dot').className='dot'+(d.running?' on':'');
+  document.getElementById('statusText').textContent=d.running?'稼働中':'停止中';
+  if(d.gmo_price)document.getElementById('m_gmo').textContent='¥'+num(d.gmo_price);
+  if(d.bb_price)document.getElementById('m_bb').textContent='¥'+num(d.bb_price);
+  document.getElementById('m_gap').textContent=(d.gap!=null)?num(d.gap)+'円':'---';
+  document.getElementById('m_pl').textContent=(d.total_profit!=null)?'¥'+num(d.total_profit):'---';
+  document.getElementById('m_asset').textContent=(d.total_asset!=null)?'¥'+num(d.total_asset):'---';
+  document.getElementById('m_trades').textContent=d.total_trades||0;
+}catch(e){}}
+function num(n){return Math.round(n).toLocaleString();}
+setInterval(update,5000);
+async function updatePrices(){try{const r=await fetch(API+'?action=prices');const d=await r.json();
+  if(d.gmo)document.getElementById('m_gmo').textContent='¥'+num(d.gmo);
+  if(d.bitbank)document.getElementById('m_bb').textContent='¥'+num(d.bitbank);
+  if(d.gap!=null)document.getElementById('m_gap').textContent=num(d.gap)+'円';
+}catch(e){}}
+setInterval(updatePrices,7000);updatePrices();
+</script></body></html>

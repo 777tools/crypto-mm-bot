@@ -1,0 +1,6 @@
+<Files ".env">
+Require all denied
+</Files>
+<Files "bot_config.json">
+Require all denied
+</Files>
