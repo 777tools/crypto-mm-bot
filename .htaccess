@@ -1,7 +1,7 @@
 # 機密ファイル・状態ファイルへのWebアクセス禁止
-<FilesMatch "^(\.env|\.git|bot_config\.json|bot\.log|bot\.pid|sim_state\.json|demo_log\.json|own_orders\.json|price_cache\.json|login_attempts\.json)">
+<FilesMatch "^(\.env|\.git|bot_config\.json|bot\.log|bot\.pid|sim_state\.json|demo_log\.json|own_orders\.json|price_cache\.json|login_attempts\.json|setup_token\.txt|risk_state\.json|start\.lock)">
 Require all denied
 </FilesMatch>
-<FilesMatch "\.(csv|log|pid)$">
+<FilesMatch "\.(csv|log|pid|lock)$">
 Require all denied
 </FilesMatch>

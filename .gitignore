@@ -1,13 +1,16 @@
 # 機密・認証情報
 .env
 bot_config.json
+setup_token.txt
 
 # 実行時に生成される状態・ログ・PID
 sim_state.json
 demo_log.json
 own_orders.json
+risk_state.json
 price_cache.json
 login_attempts.json
+start.lock
 bot.log
 bot.pid
 

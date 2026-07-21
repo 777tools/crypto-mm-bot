@@ -96,6 +96,11 @@ a{color:#7aa2ff}
     <input type="text" id="loginId" placeholder="IDを入力" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
     <label>パスワード</label>
     <input type="password" id="loginPw" placeholder="パスワードを入力" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    <div id="setupTokenRow" style="display:none">
+      <label>セットアップトークン</label>
+      <input type="text" id="setupToken" placeholder="サーバーの setup_token.txt の中身">
+      <div class="hint">サーバーにSSH/FTPで入り、crypto-mm-bot フォルダの setup_token.txt の中身を貼ってください（先着乗っ取り防止のため）</div>
+    </div>
     <button class="lbtn" id="loginBtn" onclick="doLogin()">ログイン →</button>
     <div class="msg" id="loginMsg"></div>
     <div class="foot" id="loginFoot"></div>
@@ -247,6 +252,7 @@ function tab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.re
 
 async function checkSetup(){try{const r=await fetch(API+'?action=setup_check');const d=await r.json();NEED_SETUP=!!d.need_setup;
   if(NEED_SETUP){document.getElementById('loginBtn').textContent='初期設定を作成 →';
+    document.getElementById('setupTokenRow').style.display='block';
     document.getElementById('loginFoot').textContent='はじめての起動です。管理用IDとパスワード（8文字以上）を設定してください';}
   else{document.getElementById('loginFoot').textContent='';}
 }catch(e){}}
@@ -254,7 +260,7 @@ checkSetup();
 
 async function doLogin(){
   const u=document.getElementById('loginId').value,p=document.getElementById('loginPw').value;
-  const r=NEED_SETUP?await call('setup',{username:u,password:p}):await call('login',{username:u,password:p});
+  const r=NEED_SETUP?await call('setup',{username:u,password:p,setup_token:document.getElementById('setupToken').value}):await call('login',{username:u,password:p});
   if(r.success){if(NEED_SETUP)NEED_SETUP=false;showApp();loadConfig();update();}
   else show('loginMsg',false,r.error||'失敗');}
 async function logout(){await call('logout');location.reload();}

@@ -83,7 +83,8 @@ CONFIG_LIMITS = {
     "max_open_orders":   (1, 20),
 }
 
-ALLOWED_SYMBOLS = {"eth_jpy", "btc_jpy", "xrp_jpy", "ltc_jpy", "mona_jpy", "bcc_jpy"}
+# ETH/JPY のみ対応（GMO価格・残高取得がETH固定のため、他ペアは安全装置が無効になる）
+ALLOWED_SYMBOLS = {"eth_jpy"}
 
 
 class ConfigError(Exception):
@@ -111,8 +112,10 @@ def load_config(path=CONFIG_FILE):
             raise ConfigError(f"{key} が数値ではありません: {v!r}")
         if not (lo <= v <= hi):
             raise ConfigError(f"{key}={v} は許容範囲外です（{lo}〜{hi}）")
-    cfg["post_only"] = bool(cfg["post_only"])
-    cfg["live_confirmed"] = bool(cfg["live_confirmed"])
+    # bool設定は厳格にbool型のみ許可（文字列 "false" を True 扱いしない）
+    for key in ("post_only", "live_confirmed"):
+        if not isinstance(cfg[key], bool):
+            raise ConfigError(f"{key} は true/false で指定してください（現在: {cfg[key]!r}）")
     return cfg
 
 
@@ -190,72 +193,130 @@ class BitbankAPI:
 
 # ============================================
 # 自Bot注文IDの管理（手動/他Bot注文は絶対に触らない）
+# pair ごとに永続化する（symbol変更後も旧pairの注文を追跡・取消可能にするため）
 # ============================================
+RISK_STATE_FILE = os.path.join(HERE, "risk_state.json")
+
+
+class OwnOrdersError(Exception):
+    """自Bot注文台帳の読み書き失敗"""
+
+
 class OwnOrders:
     def __init__(self, path=OWN_ORDERS_FILE):
         self.path = path
-        self.ids = set()
+        self.by_pair = {}  # {"eth_jpy": {order_id, ...}}
         self._load()
 
     def _load(self):
         try:
             with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
-            if isinstance(data, list):
-                self.ids = {int(x) for x in data}
-        except (OSError, json.JSONDecodeError, ValueError):
-            self.ids = set()
+        except FileNotFoundError:
+            self.by_pair = {}
+            return
+        except (OSError, json.JSONDecodeError) as e:
+            # 台帳が読めないと自注文を区別できない → 握り潰さず例外
+            raise OwnOrdersError(f"注文台帳 {self.path} が読めません: {e}")
+        if isinstance(data, dict):
+            for pair, ids in data.items():
+                if isinstance(ids, list):
+                    self.by_pair[pair] = {int(x) for x in ids}
+        elif isinstance(data, list):
+            # 旧形式（pairなし）は eth_jpy として引き継ぐ
+            self.by_pair = {"eth_jpy": {int(x) for x in data}}
 
     def save(self):
+        """atomic + fsync で保存。失敗は握り潰さず OwnOrdersError"""
+        tmp = self.path + ".tmp"
         try:
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(sorted(self.ids), f)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({p: sorted(ids) for p, ids in self.by_pair.items()}, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.path)
             os.chmod(self.path, 0o600)
-        except OSError:
-            pass
+        except OSError as e:
+            raise OwnOrdersError(f"注文台帳 {self.path} の保存に失敗: {e}")
 
-    def add(self, order_id):
-        self.ids.add(int(order_id))
+    def check_writable(self):
+        """live起動前の書込可能性チェック"""
         self.save()
 
-    def discard(self, order_id):
-        self.ids.discard(int(order_id))
+    def ids(self, pair):
+        return set(self.by_pair.get(pair, set()))
+
+    def all_pairs(self):
+        return [p for p, ids in self.by_pair.items() if ids]
+
+    def add(self, pair, order_id):
+        self.by_pair.setdefault(pair, set()).add(int(order_id))
+        self.save()
+
+    def discard(self, pair, order_id):
+        if pair in self.by_pair:
+            self.by_pair[pair].discard(int(order_id))
+            if not self.by_pair[pair]:
+                del self.by_pair[pair]
         self.save()
 
 
 def cancel_own_orders(prv, pair, own):
     """自Bot注文だけを取消す。戻り値: (取消成功数, 失敗した注文IDリスト)
     active_orders に無い自注文IDは約定/取消済みとして台帳から外す。"""
+    own_ids = own.ids(pair)
     try:
         result = prv.get_active_orders(pair)
     except ApiError as e:
         log(f"⚠️ アクティブ注文の取得に失敗: {e} → 取消不能（新規発注は禁止）")
-        return 0, sorted(own.ids)
+        return 0, sorted(own_ids)
     active_ids = {int(o["order_id"]) for o in result.get("orders", [])}
     cancelled = 0
     failed = []
-    for oid in sorted(own.ids):
+    for oid in sorted(own_ids):
         if oid not in active_ids:
-            own.discard(oid)  # 既に約定/取消済み
+            own.discard(pair, oid)  # 既に約定/取消済み
             continue
         try:
             prv.cancel_order(pair, oid)
-            own.discard(oid)
+            own.discard(pair, oid)
             cancelled += 1
         except ApiError as e:
             log(f"⚠️ 注文 {oid} の取消失敗: {e}")
             failed.append(oid)
-    own.save()
     return cancelled, failed
 
 
+def cancel_own_orders_all_pairs(prv, own):
+    """全pairの自Bot注文を取消す（停止時・symbol変更後の旧pair対応）"""
+    total_c, total_f = 0, []
+    for pair in own.all_pairs():
+        c, f = cancel_own_orders(prv, pair, own)
+        total_c += c
+        total_f += [(pair, oid) for oid in f]
+    return total_c, total_f
+
+
 def place_live_order(prv, cfg, side, price, own):
-    """自Bot注文として発注し、注文IDを台帳に記録する"""
+    """自Bot注文として発注し、注文IDを台帳に記録する。
+    order_id欠落は成功扱いしない。台帳保存失敗時は即その注文をcancelし、
+    そのcancelにも失敗したら OwnOrdersError（呼び出し側でhalt）。"""
     data = prv.order(cfg["symbol"], int(price), cfg["order_size"], side, "limit",
                      post_only=cfg["post_only"])
     oid = data.get("order_id")
-    if oid is not None:
-        own.add(oid)
+    if oid is None:
+        raise ApiError(f"注文応答に order_id がありません: {data}")
+    try:
+        own.add(cfg["symbol"], oid)
+    except OwnOrdersError as e:
+        log(f"⚠️ 台帳保存失敗: {e} → 注文 {oid} を即時取消します")
+        try:
+            prv.cancel_order(cfg["symbol"], oid)
+            log(f"  注文 {oid} の取消に成功しました（台帳障害のため新規発注は停止）")
+        except ApiError as ce:
+            raise OwnOrdersError(
+                f"台帳保存失敗かつ注文 {oid} の取消も失敗: {ce} → 取引所画面で手動取消してください")
+        raise
     return oid
 
 
@@ -375,7 +436,7 @@ def check_crash(gmo_price, threshold_pct):
 
 
 # ============================================
-# 本番: 残高・日次損失
+# 本番: 残高・日次損失（risk_state.json に永続化・再起動でリセットしない）
 # ============================================
 def get_balances(prv):
     """戻り値: (JPYフリー, ETHフリー+ロック合計)。失敗時は ApiError（フェイルクローズ）"""
@@ -393,14 +454,39 @@ def get_balances(prv):
     return jpy, eth
 
 
-def check_daily_loss(state, equity_now, limit):
-    """日次損失が上限を超えたら True（停止すべき）"""
+def load_risk_state(path=RISK_STATE_FILE):
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            return {"equity_date": d.get("equity_date"), "equity_start": d.get("equity_start", 0.0),
+                    "daily_loss": d.get("daily_loss", 0)}
+    except FileNotFoundError:
+        pass
+    except (OSError, json.JSONDecodeError):
+        log(f"⚠️ {os.path.basename(path)} が読めないため日次損失baselineを初期化します")
+    return {"equity_date": None, "equity_start": 0.0, "daily_loss": 0}
+
+
+def save_risk_state(state, path=RISK_STATE_FILE):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    os.chmod(path, 0o600)
+
+
+def check_daily_loss(state, equity_now, limit, path=RISK_STATE_FILE):
+    """日次損失が上限を超えたら True（停止すべき）。baselineは risk_state.json に永続化"""
     today = datetime.now().strftime("%Y-%m-%d")
     if state.get("equity_date") != today:
         state["equity_date"] = today
         state["equity_start"] = equity_now
     loss = state["equity_start"] - equity_now
     state["daily_loss"] = round(loss)
+    save_risk_state(state, path)
     return loss >= limit
 
 
@@ -536,10 +622,59 @@ def check_live_preconditions(cfg, api_key, api_secret):
         reasons.append("APIキー/シークレットが未設定です（管理画面で登録してください）")
     if not cfg["live_confirmed"]:
         reasons.append("管理画面で本番モードの明示確認（live_confirmed）がされていません")
-    for key in ("max_position", "daily_loss_limit", "max_order_jpy", "max_open_orders", "stop_loss_rate"):
+    for key in ("max_position", "daily_loss_limit", "max_order_jpy", "max_open_orders"):
         if key not in CONFIG_LIMITS:
             reasons.append(f"安全設定 {key} がありません")
     return reasons
+
+
+def run_order_cycle(prv, cfg, gmo_price, bb_price, spread, jpy_free, eth_total, own):
+    """本番の1cycle分の発注。戻り値: (発注数, エラー文字列 or None)
+    買い/売りどちらかの発注・API・台帳処理が失敗した時点でcycle全体を中断し、
+    別の注文は出さない。台帳障害(OwnOrdersError)は致命的として再送出する。"""
+    open_count = 0
+
+    # 買い（残高・保有上限・注文額上限・注文数上限を全部確認）
+    if gmo_price > bb_price:
+        buy_price = bb_price - spread
+        order_jpy = buy_price * cfg["order_size"]
+        if eth_total + cfg["order_size"] > cfg["max_position"]:
+            log(f"買い指値    : 保有上限({cfg['max_position']} ETH)を超えるため見送り")
+        elif order_jpy > cfg["max_order_jpy"]:
+            log(f"買い指値    : 注文額上限({cfg['max_order_jpy']:,}円)超過のため見送り")
+        elif jpy_free < order_jpy:
+            log(f"買い指値    : JPY残高不足（{jpy_free:,.0f}円）のため見送り")
+        elif open_count >= cfg["max_open_orders"]:
+            log(f"買い指値    : 注文数上限のため見送り")
+        else:
+            try:
+                oid = place_live_order(prv, cfg, "buy", buy_price, own)
+                open_count += 1
+                log(f"買い指値    : {buy_price:,.0f}円 発注完了 (ID:{oid})")
+            except OwnOrdersError:
+                raise  # 台帳障害は致命的 → 呼び出し側でhalt
+            except ApiError as e:
+                return open_count, f"買い発注失敗: {e}"
+
+    # 売り（ETH残高がある時のみ・買い失敗時はここに来ない）
+    if eth_total >= cfg["order_size"]:
+        sell_price = bb_price + spread
+        sell_jpy = sell_price * cfg["order_size"]
+        if sell_jpy > cfg["max_order_jpy"]:
+            log(f"売り指値    : 注文額上限({cfg['max_order_jpy']:,}円)超過のため見送り")
+        elif open_count >= cfg["max_open_orders"]:
+            log(f"売り指値    : 注文数上限のため見送り")
+        else:
+            try:
+                oid = place_live_order(prv, cfg, "sell", sell_price, own)
+                open_count += 1
+                log(f"売り指値    : {sell_price:,.0f}円 発注完了 (ID:{oid})")
+            except OwnOrdersError:
+                raise
+            except ApiError as e:
+                return open_count, f"売り発注失敗: {e}"
+
+    return open_count, None
 
 
 # ============================================
@@ -551,6 +686,8 @@ def main():
     parser = argparse.ArgumentParser(description="GMO×bitbank マーケットメイキングBot v2")
     parser.add_argument("--mode", choices=["sim", "live"], default="sim",
                         help="sim=シミュレーション（デフォルト） / live=本番")
+    parser.add_argument("--confirm-live", default="",
+                        help="live起動の明示トークン。--mode live 時は必ず LIVE を指定（毎回必要）")
     args = parser.parse_args()
     mode = args.mode
 
@@ -570,7 +707,7 @@ def main():
     log(f"損切り: {cfg['stop_loss_rate']*100}% / 最大保有: {cfg['max_position']} ETH")
     log(f"日次損失上限: {cfg['daily_loss_limit']}円 / 1注文上限: {cfg['max_order_jpy']}円 / post_only: {cfg['post_only']}")
     if mode == "sim":
-        log(f"仮想資金: {sim['jpy']:,.0f}円")
+        log(f"損切り(SIMのみ): {cfg['stop_loss_rate']*100}% / 仮想資金: {sim['jpy']:,.0f}円")
     log("=" * 55)
 
     prv = None
@@ -579,6 +716,11 @@ def main():
     halted = False
 
     if mode == "live":
+        # CLIからの迂回防止: liveは毎回明示トークンが必要
+        if args.confirm_live != "LIVE":
+            log("❌ live起動には明示トークンが必要です: --mode live --confirm-live LIVE")
+            write_state(mode, halted=True, message="live明示トークン未指定")
+            sys.exit(5)
         reasons = check_live_preconditions(cfg, BITBANK_API_KEY, BITBANK_API_SECRET)
         if reasons:
             for r in reasons:
@@ -593,9 +735,19 @@ def main():
             log(f"❌ 残高取得に失敗（起動中止）: {e}")
             write_state(mode, halted=True, message=f"残高取得失敗: {e}")
             sys.exit(4)
-        own = OwnOrders()
-        if own.ids:
-            log(f"前回の自Bot注文ID {len(own.ids)}件を引き継ぎました（手動/他Bot注文は触りません）")
+        try:
+            own = OwnOrders()
+            own.check_writable()  # 起動前に台帳の書込可能性を確認
+        except OwnOrdersError as e:
+            log(f"❌ 注文台帳が使えません（起動中止）: {e}")
+            write_state(mode, halted=True, message=f"注文台帳エラー: {e}")
+            sys.exit(6)
+        live_state = load_risk_state()
+        if live_state.get("equity_date"):
+            log(f"日次損失baseline復元: {live_state['equity_date']} 起点 {live_state.get('equity_start', 0):,.0f}円 (累計損失 {live_state.get('daily_loss', 0):,}円)")
+        n_prev = sum(len(ids) for ids in own.by_pair.values())
+        if n_prev:
+            log(f"前回の自Bot注文ID {n_prev}件を引き継ぎました（手動/他Bot注文は触りません）")
     else:
         # CSV準備
         csv_name = f"simulation_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
@@ -711,7 +863,7 @@ def main():
                     c, failed = cancel_own_orders(prv, SYMBOL, own)
                     write_state(mode, gmo_price, bb_price, gap, direction, spread_ok, vol_ok,
                                 vol_std, market_type, spread, crash,
-                                message=f"残高取得失敗: {e}", open_orders=len(own.ids))
+                                message=f"残高取得失敗: {e}", open_orders=sum(len(i) for i in own.by_pair.values()))
                     time.sleep(cfg["interval"])
                     continue
 
@@ -738,48 +890,37 @@ def main():
                     log(f"⚠️ 取消失敗 {len(failed)}件 {failed} → 新規発注禁止")
                     write_state(mode, gmo_price, bb_price, gap, direction, spread_ok, vol_ok,
                                 vol_std, market_type, spread, crash,
-                                message=f"取消失敗のため発注停止: {failed}", open_orders=len(own.ids),
+                                message=f"取消失敗のため発注停止: {failed}", open_orders=sum(len(i) for i in own.by_pair.values()),
                                 jpy=jpy_free, eth=eth_total, total_asset=round(equity))
                     time.sleep(cfg["interval"])
                     continue
 
                 open_count = 0
-
-                # 買い（残高・保有上限・注文額上限・注文数上限を全部確認）
-                if gmo_price > bb_price:
-                    buy_price = bb_price - spread
-                    order_jpy = buy_price * cfg["order_size"]
-                    if eth_total >= cfg["max_position"]:
-                        log(f"買い指値    : 保有上限({cfg['max_position']} ETH)のため見送り")
-                    elif order_jpy > cfg["max_order_jpy"]:
-                        log(f"買い指値    : 注文額上限({cfg['max_order_jpy']:,}円)超過のため見送り")
-                    elif jpy_free < order_jpy:
-                        log(f"買い指値    : JPY残高不足（{jpy_free:,.0f}円）のため見送り")
-                    elif open_count >= cfg["max_open_orders"]:
-                        log(f"買い指値    : 注文数上限のため見送り")
-                    else:
-                        try:
-                            oid = place_live_order(prv, cfg, "buy", buy_price, own)
-                            open_count += 1
-                            log(f"買い指値    : {buy_price:,.0f}円 発注完了 (ID:{oid})")
-                        except ApiError as e:
-                            log(f"買い発注失敗: {e}")
-
-                # 売り（ETH残高がある時のみ）
-                if eth_total >= cfg["order_size"]:
-                    sell_price = bb_price + spread
-                    if open_count >= cfg["max_open_orders"]:
-                        log(f"売り指値    : 注文数上限のため見送り")
-                    else:
-                        try:
-                            oid = place_live_order(prv, cfg, "sell", sell_price, own)
-                            open_count += 1
-                            log(f"売り指値    : {sell_price:,.0f}円 発注完了 (ID:{oid})")
-                        except ApiError as e:
-                            log(f"売り発注失敗: {e}")
+                try:
+                    open_count, order_err = run_order_cycle(
+                        prv, cfg, gmo_price, bb_price, spread, jpy_free, eth_total, own)
+                except OwnOrdersError as e:
+                    # 台帳障害は致命的 → halt（再起動まで発注しない）
+                    halted = True
+                    log(f"⛔ 注文台帳の致命的障害: {e} → 全停止")
+                    write_state(mode, gmo_price, bb_price, gap, direction, spread_ok, vol_ok,
+                                vol_std, market_type, spread, crash, halted=True,
+                                message=f"注文台帳障害: {e}", open_orders=sum(len(i) for i in own.by_pair.values()),
+                                jpy=jpy_free, eth=eth_total, total_asset=round(equity))
+                    time.sleep(cfg["interval"])
+                    continue
+                if order_err:
+                    log(f"⚠️ {order_err} → このcycleの残りの発注は中止しました")
+                    write_state(mode, gmo_price, bb_price, gap, direction, spread_ok, vol_ok,
+                                vol_std, market_type, spread, crash,
+                                message=order_err, open_orders=sum(len(i) for i in own.by_pair.values()),
+                                daily_loss=live_state.get("daily_loss", 0),
+                                jpy=jpy_free, eth=eth_total, total_asset=round(equity))
+                    time.sleep(cfg["interval"])
+                    continue
 
                 write_state(mode, gmo_price, bb_price, gap, direction, spread_ok, vol_ok,
-                            vol_std, market_type, spread, crash, open_orders=len(own.ids),
+                            vol_std, market_type, spread, crash, open_orders=sum(len(i) for i in own.by_pair.values()),
                             daily_loss=live_state.get("daily_loss", 0),
                             jpy=jpy_free, eth=eth_total, total_asset=round(equity))
 
@@ -794,9 +935,9 @@ def main():
     log("停止処理を開始します")
 
     if mode == "live" and prv and own:
-        log("自Bot未約定注文をキャンセル中（手動/他Bot注文は触りません）...")
+        log("自Bot未約定注文をキャンセル中（全pair・手動/他Bot注文は触りません）...")
         try:
-            c, failed = cancel_own_orders(prv, SYMBOL, own)
+            c, failed = cancel_own_orders_all_pairs(prv, own)
             log(f"キャンセル完了: {c}件")
             if failed:
                 log(f"⚠️ キャンセル失敗: {len(failed)}件 {failed} → 取引所画面で手動確認してください")
@@ -819,7 +960,7 @@ def main():
         log(f"保有ETH     : {sim['eth']:.4f}")
         write_state(mode, halted=True, message="停止")
     else:
-        write_state(mode, halted=True, message="停止", open_orders=len(own.ids) if own else 0)
+        write_state(mode, halted=True, message="停止", open_orders=sum(len(i) for i in own.by_pair.values()) if own else 0)
     log("=" * 55)
 
     if csv_file:
