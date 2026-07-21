@@ -96,9 +96,9 @@ a{color:#7aa2ff}
     <input type="text" id="loginId" placeholder="IDを入力" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
     <label>パスワード</label>
     <input type="password" id="loginPw" placeholder="パスワードを入力" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
-    <button class="lbtn" onclick="doLogin()">ログイン →</button>
+    <button class="lbtn" id="loginBtn" onclick="doLogin()">ログイン →</button>
     <div class="msg" id="loginMsg"></div>
-    <div class="foot">初期ID: admin ／ 初期パスワード: crypto2026</div>
+    <div class="foot" id="loginFoot"></div>
   </div>
 </div>
 
@@ -128,6 +128,8 @@ a{color:#7aa2ff}
     <div class="row"><div><label>モード</label>
       <select id="runMode"><option value="sim">シミュレーション（お金を使わない）</option><option value="live">本番（実際に売買）</option></select>
     </div></div>
+    <div style="margin-top:12px"><label style="display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer"><input type="checkbox" id="liveEnable" style="width:auto" onchange="toggleLive(this.checked)"> 本番モードを有効化する（実際にお金が動きます。リスクを理解しました）</label>
+    <div class="hint">※本番起動には①APIキー登録 ②この有効化チェック ③起動時の確認 が全て必要です。</div></div>
     <button class="act ok" onclick="startBot()">▶ 起動</button>
     <button class="act stop" onclick="stopBot()">■ 停止</button>
     <div class="hint">※本番の前に、必ずシミュレーションで動きを確認してください。</div>
@@ -166,7 +168,7 @@ a{color:#7aa2ff}
     <div class="hint">※Secret は発行時の1回しか表示されません。必ずコピーしておいてください。</div>
   </div>
   <div class="card"><h2>🔒 パスワード変更</h2>
-    <label>新しい管理画面パスワード（6文字以上）</label>
+    <label>新しい管理画面パスワード（8文字以上）</label>
     <input type="password" id="newPw" placeholder="新しいパスワード">
     <button class="act" onclick="changePw()">変更する</button>
     <div class="msg" id="pwMsg"></div>
@@ -188,6 +190,18 @@ a{color:#7aa2ff}
     <div class="row">
       <div><label>乖離しきい値（円）</label><input type="number" id="r_spread_threshold"><div class="hint">GMOとbitbankの価格差がこれ以上で発注</div></div>
       <div><label>急落ガード（%）</label><input type="number" step="0.1" id="r_crash_threshold"><div class="hint">この割合の急落で自動的に発注停止</div></div>
+    </div>
+    <div class="row">
+      <div><label>最大保有（ETH）</label><input type="number" step="0.01" id="r_max_position"><div class="hint">これ以上は買い増ししない</div></div>
+      <div><label>損切り（%未満で指定: 0.02=2%）</label><input type="number" step="0.01" id="r_stop_loss_rate"><div class="hint">SIMの損切り幅。0.001〜0.5</div></div>
+    </div>
+    <div class="row">
+      <div><label>日次損失の上限（円）</label><input type="number" id="r_daily_loss_limit"><div class="hint">1日の損失がこれに達したら全停止（本番）</div></div>
+      <div><label>1注文の上限（円）</label><input type="number" id="r_max_order_jpy"><div class="hint">これを超える金額の注文は出さない（本番）</div></div>
+    </div>
+    <div class="row">
+      <div><label>同時注文数の上限</label><input type="number" id="r_max_open_orders"><div class="hint">自Botが同時に出す注文の最大数（本番）</div></div>
+      <div><label style="display:flex;align-items:center;gap:8px;margin-top:24px;cursor:pointer"><input type="checkbox" id="r_post_only" style="width:auto"> メーカー注文のみ（post_only）</label></div>
     </div>
     <button class="act" onclick="saveRules()">この内容で保存</button>
     <div class="msg" id="ruleMsg"></div>
@@ -219,31 +233,64 @@ a{color:#7aa2ff}
 
 <script>
 const API='api.php';
-async function call(action,data){const b=new URLSearchParams({action,...(data||{})});const r=await fetch(API,{method:'POST',body:b});return r.json();}
+let CSRF='';
+let NEED_SETUP=false;
+async function call(action,data){const b=new URLSearchParams({action,...(data||{})});if(CSRF)b.set('csrf',CSRF);
+  const r=await fetch(API,{method:'POST',body:b});const j=await r.json();
+  if(j&&j.csrf)CSRF=j.csrf;
+  if(j&&j.need_login){showLogin();}
+  return j;}
 function show(id,ok,txt){const e=document.getElementById(id);e.className='msg '+(ok?'ok':'err');e.textContent=txt;}
+function showLogin(){document.getElementById('login').style.display='flex';document.getElementById('app').style.display='none';}
+function showApp(){document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';}
 function tab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('show'));document.getElementById(id).classList.add('show');document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));btn.classList.add('active');if(id==='keys'||id==='rules')loadConfig();}
 
-async function doLogin(){const r=await call('login',{username:document.getElementById('loginId').value,password:document.getElementById('loginPw').value});
-  if(r.success){document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';loadConfig();update();}
+async function checkSetup(){try{const r=await fetch(API+'?action=setup_check');const d=await r.json();NEED_SETUP=!!d.need_setup;
+  if(NEED_SETUP){document.getElementById('loginBtn').textContent='初期設定を作成 →';
+    document.getElementById('loginFoot').textContent='はじめての起動です。管理用IDとパスワード（8文字以上）を設定してください';}
+  else{document.getElementById('loginFoot').textContent='';}
+}catch(e){}}
+checkSetup();
+
+async function doLogin(){
+  const u=document.getElementById('loginId').value,p=document.getElementById('loginPw').value;
+  const r=NEED_SETUP?await call('setup',{username:u,password:p}):await call('login',{username:u,password:p});
+  if(r.success){if(NEED_SETUP)NEED_SETUP=false;showApp();loadConfig();update();}
   else show('loginMsg',false,r.error||'失敗');}
 async function logout(){await call('logout');location.reload();}
 async function changePw(){const r=await call('change_password',{new_password:document.getElementById('newPw').value});show('pwMsg',r.success,r.success?'変更しました':r.error);}
 
 async function loadConfig(){const r=await call('get_config');if(!r.success)return;
   const ks=document.getElementById('keyStat');ks.className='pill '+(r.keys_set?'on':'off');ks.textContent=r.keys_set?'設定済み':'未設定';
+  document.getElementById('liveEnable').checked=!!r.live_confirmed;
   const rl=r.rules;document.getElementById('r_order_size').value=rl.order_size;document.getElementById('r_interval').value=rl.interval;
   document.getElementById('r_spread_range').value=rl.spread_range;document.getElementById('r_spread_trend').value=rl.spread_trend;
-  document.getElementById('r_spread_threshold').value=rl.spread_threshold;document.getElementById('r_crash_threshold').value=rl.crash_threshold;}
+  document.getElementById('r_spread_threshold').value=rl.spread_threshold;document.getElementById('r_crash_threshold').value=rl.crash_threshold;
+  document.getElementById('r_max_position').value=rl.max_position;document.getElementById('r_stop_loss_rate').value=rl.stop_loss_rate;
+  document.getElementById('r_daily_loss_limit').value=rl.daily_loss_limit;document.getElementById('r_max_order_jpy').value=rl.max_order_jpy;
+  document.getElementById('r_max_open_orders').value=rl.max_open_orders;document.getElementById('r_post_only').checked=!!rl.post_only;}
 async function saveKeys(){const r=await call('save_keys',{api_key:document.getElementById('apiKey').value,api_secret:document.getElementById('apiSecret').value});
   show('keyMsg',r.success,r.success?'保存しました。キーは安全に .env に保管されました。':r.error);if(r.success){document.getElementById('apiKey').value='';document.getElementById('apiSecret').value='';loadConfig();}}
-async function saveRules(){const d={order_size:r_order_size.value,interval:r_interval.value,spread_range:r_spread_range.value,spread_trend:r_spread_trend.value,spread_threshold:r_spread_threshold.value,crash_threshold:r_crash_threshold.value};
+async function saveRules(){const d={order_size:r_order_size.value,interval:r_interval.value,spread_range:r_spread_range.value,spread_trend:r_spread_trend.value,spread_threshold:r_spread_threshold.value,crash_threshold:r_crash_threshold.value,
+  max_position:r_max_position.value,stop_loss_rate:r_stop_loss_rate.value,daily_loss_limit:r_daily_loss_limit.value,max_order_jpy:r_max_order_jpy.value,max_open_orders:r_max_open_orders.value,post_only:r_post_only.checked?'1':'0'};
   const r=await call('save_rules',d);show('ruleMsg',r.success,r.success?'保存しました。次回起動から反映されます。':r.error);}
-async function startBot(){const m=document.getElementById('runMode').value;const b=document.getElementById('modeBadge');b.textContent=m==='live'?'LIVE':'SIMULATION';b.className='badge'+(m==='live'?' live':'');const r=await call('start',{mode:m});show('ctrlMsg',r.success,r.success?(m==='live'?'本番モードで起動しました':'シミュレーションで起動しました'):(r.error||'失敗'));}
-async function stopBot(){const r=await call('stop');show('ctrlMsg',r.success,'停止しました');}
+async function toggleLive(on){const r=await call('confirm_live',{enable:on?'1':'0'});
+  if(!r.success){document.getElementById('liveEnable').checked=false;show('ctrlMsg',false,r.error||'有効化できません');}
+  else show('ctrlMsg',true,on?'本番モードを有効化しました。起動時に最終確認が出ます':'本番モードを無効化しました');}
+async function startBot(){const m=document.getElementById('runMode').value;
+  const data={mode:m};
+  if(m==='live'){if(!confirm('【最終確認】本番モードで起動します。実際の資金で自動売買を開始します。よろしいですか？'))return;data.confirm='LIVE';}
+  const r=await call('start',data);
+  if(r.success){const b=document.getElementById('modeBadge');b.textContent=m==='live'?'LIVE':'SIMULATION';b.className='badge'+(m==='live'?' live':'');}
+  show('ctrlMsg',r.success,r.success?(m==='live'?'本番モードで起動しました':'シミュレーションで起動しました'):(r.error||'失敗'));}
+async function stopBot(){const r=await call('stop');show('ctrlMsg',r.success,r.success?'停止しました（自Bot注文は自動で取消されます）':(r.error||'失敗'));}
 
 async function update(){try{const r=await fetch(API+'?action=status');const d=await r.json();
+  if(d&&d.need_login){showLogin();return;}
   document.getElementById('dot').className='dot'+(d.running?' on':'');
   document.getElementById('statusText').textContent=d.running?'稼働中':'停止中';
+  if(d.mode){const b=document.getElementById('modeBadge');b.textContent=d.mode==='live'?'LIVE':'SIMULATION';b.className='badge'+(d.mode==='live'?' live':'');}
+  if(d.halted&&d.message)document.getElementById('statusText').textContent='停止中: '+d.message;
   if(d.gmo_price)document.getElementById('m_gmo').textContent='¥'+num(d.gmo_price);
   if(d.bb_price)document.getElementById('m_bb').textContent='¥'+num(d.bb_price);
   document.getElementById('m_gap').textContent=(d.gap!=null)?num(d.gap)+'円':'---';
@@ -254,6 +301,7 @@ async function update(){try{const r=await fetch(API+'?action=status');const d=aw
 function num(n){return Math.round(n).toLocaleString();}
 setInterval(update,5000);
 async function updatePrices(){try{const r=await fetch(API+'?action=prices');const d=await r.json();
+  if(d&&d.need_login)return;
   if(d.gmo)document.getElementById('m_gmo').textContent='¥'+num(d.gmo);
   if(d.bitbank)document.getElementById('m_bb').textContent='¥'+num(d.bitbank);
   if(d.gap!=null)document.getElementById('m_gap').textContent=num(d.gap)+'円';

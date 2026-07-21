@@ -1,6 +1,7 @@
-<Files ".env">
+# 機密ファイル・状態ファイルへのWebアクセス禁止
+<FilesMatch "^(\.env|\.git|bot_config\.json|bot\.log|bot\.pid|sim_state\.json|demo_log\.json|own_orders\.json|price_cache\.json|login_attempts\.json)">
 Require all denied
-</Files>
-<Files "bot_config.json">
+</FilesMatch>
+<FilesMatch "\.(csv|log|pid)$">
 Require all denied
-</Files>
+</FilesMatch>

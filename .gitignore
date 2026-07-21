@@ -1,6 +1,21 @@
+# 機密・認証情報
 .env
+bot_config.json
+
+# 実行時に生成される状態・ログ・PID
+sim_state.json
+demo_log.json
+own_orders.json
+price_cache.json
+login_attempts.json
+bot.log
+bot.pid
+
+# シミュレーション結果
+*.csv
+
+# Python
 venv/
 __pycache__/
 *.pyc
-*.csv
-sim_state.json
+.pytest_cache/
