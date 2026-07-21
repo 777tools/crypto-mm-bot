@@ -16,7 +16,7 @@ jobs:
           python-version: "3.12"
 
       - name: Python構文チェック
-        run: python -m py_compile bot.py bot_v2.py backtest.py demo.py
+        run: python -m py_compile bot_v2.py backtest.py demo.py
 
       - name: PHP構文チェック
         run: php -l web/api.php
